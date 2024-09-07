@@ -1,3 +1,4 @@
+import { get } from "http";
 import * as vscode from "vscode";
 
 interface BlockData {
@@ -22,6 +23,84 @@ class LevelDocumentSymbol extends vscode.DocumentSymbol {
     super(name, detail, kind, range, selectionRange);
     this.level = level;
   }
+}
+
+
+class SymbolsHolder {
+  lastSymbolsPerLevel: LevelDocumentSymbol[];
+  allRootSymbols: LevelDocumentSymbol[] = [];
+  constructor() {
+    this.lastSymbolsPerLevel = [];
+    this.allRootSymbols = [];
+  }
+
+  addSymbol(symbol: LevelDocumentSymbol) {
+    
+    if (symbol.level < 1) {
+      throw new Error("Symbol level should be greater than 0");
+    }
+    
+    if (symbol.level === 1) {
+      this.allRootSymbols.push(symbol);
+      this.lastSymbolsPerLevel = [symbol];
+      return;
+    } 
+
+    let diffWithLastLevel: number = symbol.level - this.lastSymbolsPerLevel.length;
+    
+    /*
+    Here looking at the situation like this:
+
+    *     1     level 1
+    * *   1.2   level 2
+    * * * 1.2.1 level 3   <= previous level 
+    * *   1.3   level 2   <= current level
+    
+    Or like this:
+    
+    *     1     level 1
+    * *   1.2   level 2
+    * * * 1.2.1 level 3   <= previous level 
+    * *   1.2.2 level 2   <= current level
+    */
+    if (diffWithLastLevel <= 0 ) {
+      // Push this symbol as a child of the last symbol with the level one level up the hierarchy 
+      // (which means one level lower in terms of the level number)
+      // Since the 1st element of array keeps the level 1, but has an index 0, we need to subtract 2 from the level
+      this.lastSymbolsPerLevel[symbol.level - 2].children.push(symbol);
+
+      // Now we make the array to be the same length as the level
+      this.lastSymbolsPerLevel = this.lastSymbolsPerLevel.slice(0, symbol.level);
+      // finally we update the symbol being added as the last symbol for this level
+      this.lastSymbolsPerLevel[symbol.level - 1] = symbol;
+      return;
+    }
+
+    /*
+    Here looking at the situation like this:
+
+    *     1     level 1   <= previous level 
+    * *   1.2   level 2   < = current level
+    */
+    if (diffWithLastLevel == 1 ) {
+      // Push this symbol as a child of the last symbol with the level one level up the hierarchy 
+      // (which means one level lower in terms of the level number)
+      this.lastSymbolsPerLevel[symbol.level - 2].children.push(symbol);
+      // Extend the array with the new symbol, as the new symbol has the level with the number, 1 bigger than the last one
+      this.lastSymbolsPerLevel.push(symbol);
+    }
+
+    if (diffWithLastLevel > 1) {
+      console.log("console.log: The level difference is greater than 1 and it is not supported yet");
+      throw new Error("The level difference is greater than 1 and it is not supported yet");
+    }
+
+  }
+
+  getRootSymbols(): LevelDocumentSymbol[] {
+    return this.allRootSymbols;
+  }
+
 }
 
 export class SymbolProvider implements vscode.DocumentSymbolProvider {
@@ -79,7 +158,10 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
 
     console.log("provideDocumentSymbols is called");
 
-    const allSymbols: LevelDocumentSymbol[] = [];
+    // const allSymbols: LevelDocumentSymbol[] = [];
+
+    const symbolsHolder = new SymbolsHolder();
+
     let lineNumber = 0;
 
     while (lineNumber < document.lineCount) {
@@ -115,21 +197,9 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
         }
       }
 
-      // check if this symbol should be a child or not
-      const lastSymbol = allSymbols[allSymbols.length - 1];
-      if (lastSymbol && lastSymbol.level < result.level) {
-
-        console.log(`Pushing ${result.name} as a child of the ${lastSymbol.name}`);
-
-        lastSymbol.children.push(this.createSymbol(result));
-      } else {
-
-        console.log(`Pushing ${result.name} as a root symbol`);
-
-        allSymbols.push(this.createSymbol(result));
-      }
+        symbolsHolder.addSymbol(this.createSymbol(result));
     }
 
-    return allSymbols;
+    return symbolsHolder.getRootSymbols();
   }
 }

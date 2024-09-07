@@ -76,6 +76,9 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
     document: vscode.TextDocument,
     _token: vscode.CancellationToken
   ): Promise<vscode.DocumentSymbol[]> {
+
+    console.log("provideDocumentSymbols is called");
+
     const allSymbols: LevelDocumentSymbol[] = [];
     let lineNumber = 0;
 
@@ -83,11 +86,13 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
       const currentLine = document.lineAt(lineNumber);
       lineNumber++;
 
-      // blocks start with 1 or 2 asterisks (*)
+      // blocks start with 1 or more asterisks (*), where amount of asterisks determins the level of the block
       // https://beancount.github.io/docs/beancount_language_syntax.html#comments
       if (!currentLine.text.startsWith("*")) {
         continue;
       }
+
+      console.log("Processing the text line ", currentLine.text);
 
       const result: BlockData = this.parseText(currentLine.text);
 
@@ -113,8 +118,14 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
       // check if this symbol should be a child or not
       const lastSymbol = allSymbols[allSymbols.length - 1];
       if (lastSymbol && lastSymbol.level < result.level) {
+
+        console.log(`Pushing ${result.name} as a child of the ${lastSymbol.name}`);
+
         lastSymbol.children.push(this.createSymbol(result));
       } else {
+
+        console.log(`Pushing ${result.name} as a root symbol`);
+
         allSymbols.push(this.createSymbol(result));
       }
     }

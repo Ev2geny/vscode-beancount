@@ -96,7 +96,6 @@ class SymbolsHierarchyBuilder {
     let symbol: LevelDocumentSymbol = createSymbol(blockData);
 
     if (symbol.level < 1) {
-      console.log(" Error: Symbol level should be greater than 0");
       throw new Error("Symbol level should be greater than 0");
     }
     
@@ -230,9 +229,6 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
     _token: vscode.CancellationToken
   ): Promise<vscode.DocumentSymbol[]> {
 
-    console.log("provideDocumentSymbols is called");
-
-    // const allSymbols: LevelDocumentSymbol[] = [];
 
     const  symbolsHierarchyBuilder = new SymbolsHierarchyBuilder();
 
@@ -247,8 +243,6 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
       if (!currentLine.text.startsWith("*")) {
         continue;
       }
-
-      console.log("Processing the text line ", currentLine.text);
 
       const blockData: BlockData = parseLine(currentLine.text);
 

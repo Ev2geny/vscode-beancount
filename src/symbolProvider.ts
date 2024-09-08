@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 // TODO: We have to think whether we want to have more levels, but for now we will keep it as it was before
 const LEVEL1_SYMBOL_KIND = vscode.SymbolKind.Class;
 const LEVEL_ABOVE_1_SYMBOL_KIND = vscode.SymbolKind.Function;
+const DUMMY_SYMBOL_NAME = "_"; // used for filling missing levels
 
 interface BlockData {
   name: string;
@@ -172,10 +173,10 @@ class SymbolsHierarchyBuilder {
      */
 
     if (diffWithLastLevel > 1) {
-      // creating a shallow copy of the blockData object and then converting it to the dummy blockData with the name "_"
-      // and the level one level lower than the current level
+      // creating a shallow copy of the blockData object and then converting it to the dummy blockData 
+      // with level lower than the current level
       const dummyBlockData: BlockData = { ...blockData };
-      dummyBlockData.name = "_";
+      dummyBlockData.name = DUMMY_SYMBOL_NAME;
       dummyBlockData.level = dummyBlockData.level - 1;
       if (dummyBlockData.level === 1) {
         dummyBlockData.kind = LEVEL1_SYMBOL_KIND;

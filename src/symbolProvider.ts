@@ -1,6 +1,10 @@
 import { get } from "http";
 import * as vscode from "vscode";
 
+// TODO: We have to think whether we want to have more levels, but for now we will keep it as it was before
+const LEVEL1_SYMBOL_KIND = vscode.SymbolKind.Class;
+const LEVEL_ABOVE_1_SYMBOL_KIND = vscode.SymbolKind.Function;
+
 interface BlockData {
   name: string;
   level: number;
@@ -51,8 +55,37 @@ function createSymbol(block: BlockData): LevelDocumentSymbol {
  * 
  */
 class SymbolsHierarchyBuilder {
+  /*
+  The lastSymbolsPerLevel array keeps the last symbol for each level. Every time a method addBlockData is called, this
+  array is updated and possibly reshaped
+
+  E.g. having processed the following lines:
+
+  *   1      Level1
+  **  1.2    Level2
+  *** 1.2.1  Level3
+
+  the lastSymbolsPerLevel will hold the following data ["1      Level1", "1.2    Level2", "1.2.1  Level3"]
+
+  Once the following extra line is processed:
+
+  *   1      Level1
+  **  1.2    Level2
+  *** 1.2.1  Level3
+  *   2      Level1   <== New extra line line, processed
+
+  the lastSymbolsPerLevel will be re-shaped, updated and will hold the following data ["2      Level1"]
+  */
   lastSymbolsPerLevel: LevelDocumentSymbol[];
+  /*
+  allRootSymbols array keeps all the root symbols (which are the symbols with the level 1). These symbols in tern
+  may have children, which are the 2nd level symbols, which in turn may have 3rd level children etc
+  Hence allRootSymbols array holds a hierarchy of symbols, which we will be returning as the result
+  There is no need to return the children (anything above level 1), as they are already included as the root symbols' 
+  children 
+  */
   allRootSymbols: LevelDocumentSymbol[] = [];
+  
   constructor() {
     this.lastSymbolsPerLevel = [];
     this.allRootSymbols = [];
@@ -63,6 +96,7 @@ class SymbolsHierarchyBuilder {
     let symbol: LevelDocumentSymbol = createSymbol(blockData);
 
     if (symbol.level < 1) {
+      console.log(" Error: Symbol level should be greater than 0");
       throw new Error("Symbol level should be greater than 0");
     }
     
@@ -75,19 +109,21 @@ class SymbolsHierarchyBuilder {
     let diffWithLastLevel: number = symbol.level - this.lastSymbolsPerLevel.length;
     
     /*
-    Here looking at the situation like this:
+    First handing  the situation when the level of the new symbol is smaller than the level of the last symbol
+
+    Like this:
 
     *     1     level 1
-    * *   1.2   level 2
-    * * * 1.2.1 level 3   <= previous level 
-    * *   1.3   level 2   <= current level
+    * *   1.1   level 2
+    * * * 1.1.1 level 3   <= previous level 
+    * *   1.2   level 2   <= current level
     
     Or like this:
     
     *     1     level 1
-    * *   1.2   level 2
-    * * * 1.2.1 level 3   <= previous level 
-    * *   1.2.2 level 2   <= current level
+    * *   1.1   level 2
+    * * * 1.1.1 level 3   <= previous level 
+    * *   1.1.2 level 2   <= current level
     */
     if (diffWithLastLevel <= 0 ) {
       // Push this symbol as a child of the last symbol with the level one level up the hierarchy 
@@ -103,22 +139,50 @@ class SymbolsHierarchyBuilder {
     }
 
     /*
-    Here looking at the situation like this:
+    Here looking at the situation, when the level of the new symbol is greater than the level of the last symbol by one
 
-    *     1     level 1   <= previous level 
-    * *   1.2   level 2   < = current level
+    *    1     level 1   <= previous level 
+    **   1.1   level 2   < = current level
     */
     if (diffWithLastLevel == 1 ) {
       // Push this symbol as a child of the last symbol with the level one level up the hierarchy 
       // (which means one level lower in terms of the level number)
       this.lastSymbolsPerLevel[symbol.level - 2].children.push(symbol);
-      // Extend the array with the new symbol, as the new symbol has the level with the number, 1 bigger than the last one
+      // Extend the array with the new symbol, as the new symbol has the level with the number, 1 bigger than the 
+      // last one
       this.lastSymbolsPerLevel.push(symbol);
+      return;
     }
 
+    /*
+    Here looking at the situation, when the level of the new symbol is greater than the level of the last symbol 
+    by more than one (so one or more levels are skipped)
+
+    E.g. Like this:
+    *     1       level 1   <= previous level 
+    ***   1.1.1   level 3   < = current level (level 2 is skipped)
+
+    VS Code does not support this kind of hierarchy in the OUTLINE window natively, as in a normal computer language 
+    (e.g. JavaScrip) this would not be a valid situation. But since in beancount it is possible, 
+    (as it is not being checked), we need to be able to handle this situation as well.
+    
+    To work around this, we fill missing levels with dummy symbols, with the name "_"
+
+    If the level difference is more than 2, then this part of the code will call itself recursively, until the level 
+    difference is 1
+     */
+
     if (diffWithLastLevel > 1) {
-      console.log("console.log: The level difference is greater than 1 and it is not supported yet");
-      throw new Error("The level difference is greater than 1 and it is not supported yet");
+      // creating a shallow copy of the blockData object and then converting it to the dummy blockData with the name "_"
+      // and the level one level lower than the current level
+      const dummyBlockData: BlockData = { ...blockData };
+      dummyBlockData.name = "_";
+      dummyBlockData.level = dummyBlockData.level - 1;
+      if (dummyBlockData.level === 1) {
+        dummyBlockData.kind = LEVEL1_SYMBOL_KIND;
+      }
+      this.addBlockData(dummyBlockData);
+      this.addBlockData(blockData);
     }
 
   }
@@ -133,7 +197,7 @@ function parseLine(text: string): BlockData {
   const data: BlockData = {
     name: "",
     level: 0,
-    kind: vscode.SymbolKind.Class,
+    kind: LEVEL1_SYMBOL_KIND,
     start: {} as vscode.TextLine,
     end: {} as vscode.TextLine,
   };
@@ -152,7 +216,7 @@ function parseLine(text: string): BlockData {
     }
   }
   if (data.level > 1) {
-    data.kind = vscode.SymbolKind.Function;
+    data.kind = LEVEL_ABOVE_1_SYMBOL_KIND;
   }
   data.name = data.name.trim();
   return data;

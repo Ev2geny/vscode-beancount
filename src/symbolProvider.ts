@@ -25,8 +25,32 @@ class LevelDocumentSymbol extends vscode.DocumentSymbol {
   }
 }
 
+function createSymbol(block: BlockData): LevelDocumentSymbol {
+  return new LevelDocumentSymbol(
+    block.name,
+    "",
+    block.kind,
 
-class SymbolsHolder {
+    // line number range for entire symbol block
+    new vscode.Range(block.start.range.start, block.end.range.end),
+
+    // where to put line highlighting
+    new vscode.Range(
+      new vscode.Position(block.start.lineNumber, block.level + 1),
+      new vscode.Position(block.start.lineNumber, block.start.text.length)
+    ),
+    block.level
+  );
+}
+
+/**
+ * This class encapsulates logic of building a tree of symbols, when the symbols are added in the order of their 
+ * appearance in the document
+ * It handles all the combination of situations, when the level of the new symbol is larger or smaller than the level 
+ * of the last symbol including the situation when the level difference is greater than 1
+ * 
+ */
+class SymbolsHierarchyBuilder {
   lastSymbolsPerLevel: LevelDocumentSymbol[];
   allRootSymbols: LevelDocumentSymbol[] = [];
   constructor() {
@@ -34,8 +58,10 @@ class SymbolsHolder {
     this.allRootSymbols = [];
   }
 
-  addSymbol(symbol: LevelDocumentSymbol) {
+  addBlockData(blockData: BlockData) {
     
+    let symbol: LevelDocumentSymbol = createSymbol(blockData);
+
     if (symbol.level < 1) {
       throw new Error("Symbol level should be greater than 0");
     }
@@ -97,59 +123,43 @@ class SymbolsHolder {
 
   }
 
-  getRootSymbols(): LevelDocumentSymbol[] {
+  getSymbolsHierarchy(): LevelDocumentSymbol[] {
     return this.allRootSymbols;
   }
 
 }
 
+function parseLine(text: string): BlockData {
+  const data: BlockData = {
+    name: "",
+    level: 0,
+    kind: vscode.SymbolKind.Class,
+    start: {} as vscode.TextLine,
+    end: {} as vscode.TextLine,
+  };
+  for (let i = 0; i < text.length; i++) {
+    const element = text[i];
+
+    // avoid any comments like ;#region
+    if (element === ";") {
+      break;
+    }
+
+    if (element === "*") {
+      data.level++;
+    } else {
+      data.name += element;
+    }
+  }
+  if (data.level > 1) {
+    data.kind = vscode.SymbolKind.Function;
+  }
+  data.name = data.name.trim();
+  return data;
+}
+
+
 export class SymbolProvider implements vscode.DocumentSymbolProvider {
-  private parseText(text: string): BlockData {
-    const data: BlockData = {
-      name: "",
-      level: 0,
-      kind: vscode.SymbolKind.Class,
-      start: {} as vscode.TextLine,
-      end: {} as vscode.TextLine,
-    };
-    for (let i = 0; i < text.length; i++) {
-      const element = text[i];
-
-      // avoid any comments like ;#region
-      if (element === ";") {
-        break;
-      }
-
-      if (element === "*") {
-        data.level++;
-      } else {
-        data.name += element;
-      }
-    }
-    if (data.level > 1) {
-      data.kind = vscode.SymbolKind.Function;
-    }
-    data.name = data.name.trim();
-    return data;
-  }
-
-  private createSymbol(block: BlockData): LevelDocumentSymbol {
-    return new LevelDocumentSymbol(
-      block.name,
-      "",
-      block.kind,
-
-      // line number range for entire symbol block
-      new vscode.Range(block.start.range.start, block.end.range.end),
-
-      // where to put line highlighting
-      new vscode.Range(
-        new vscode.Position(block.start.lineNumber, block.level + 1),
-        new vscode.Position(block.start.lineNumber, block.start.text.length)
-      ),
-      block.level
-    );
-  }
 
   async provideDocumentSymbols(
     document: vscode.TextDocument,
@@ -160,7 +170,7 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
 
     // const allSymbols: LevelDocumentSymbol[] = [];
 
-    const symbolsHolder = new SymbolsHolder();
+    const  symbolsHierarchyBuilder = new SymbolsHierarchyBuilder();
 
     let lineNumber = 0;
 
@@ -168,7 +178,7 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
       const currentLine = document.lineAt(lineNumber);
       lineNumber++;
 
-      // blocks start with 1 or more asterisks (*), where amount of asterisks determins the level of the block
+      // blocks start with 1 or more asterisks (*), where amount of asterisks determines the level of the block
       // https://beancount.github.io/docs/beancount_language_syntax.html#comments
       if (!currentLine.text.startsWith("*")) {
         continue;
@@ -176,30 +186,30 @@ export class SymbolProvider implements vscode.DocumentSymbolProvider {
 
       console.log("Processing the text line ", currentLine.text);
 
-      const result: BlockData = this.parseText(currentLine.text);
+      const blockData: BlockData = parseLine(currentLine.text);
 
-      if (!result.name) {
+      if (!blockData.name) {
         // detect case where name is not yet provided
         continue;
       }
 
-      result.start = currentLine;
-      result.end = currentLine;
+      blockData.start = currentLine;
+      blockData.end = currentLine;
 
       // search for the end of this heading block
       while (lineNumber < document.lineCount) {
         const line = document.lineAt(lineNumber);
         if (!line.text.startsWith("*")) {
-          result.end = line;
+          blockData.end = line;
           lineNumber++;
         } else {
           break;
         }
       }
 
-        symbolsHolder.addSymbol(this.createSymbol(result));
+        symbolsHierarchyBuilder.addBlockData(blockData);
     }
 
-    return symbolsHolder.getRootSymbols();
+    return  symbolsHierarchyBuilder.getSymbolsHierarchy();
   }
 }
